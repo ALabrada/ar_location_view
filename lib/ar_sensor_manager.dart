@@ -9,11 +9,7 @@ import 'package:vector_math/vector_math_64.dart';
 
 import 'ar_location_view.dart';
 
-class ArSensorManager {
-  static final ArSensorManager instance = ArSensorManager._internal();
-
-  ArSensorManager._internal();
-
+class ArSensorManager implements ArSensorSource {
   StreamSubscription<AccelerometerEvent>? _accelerationStream;
   StreamSubscription<CompassEvent>? _headingStream;
   StreamSubscription<UserAccelerometerEvent>? _userAccelerationStream;
@@ -36,6 +32,7 @@ class ArSensorManager {
 
   List<double> pitchHistory = [];
 
+  @override
   void init() {
     _arSensorController = StreamController();
     _checkLocationPermission();
@@ -102,6 +99,7 @@ class ArSensorManager {
     _arSensorController.add(arSensor);
   }
 
+  @override
   Stream<ArSensor> get arSensor => _arSensorController.stream;
 
   Future<void> _checkLocationPermission() async {
@@ -117,6 +115,7 @@ class ArSensorManager {
     }
   }
 
+  @override
   void dispose() {
     _arSensorController.close();
     _accelerationStream?.cancel();

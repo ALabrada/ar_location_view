@@ -1,8 +1,6 @@
 import 'package:geolocator/geolocator.dart';
 
 class ArStatus {
-  static final ArStatus _instance = ArStatus._internal();
-
   ///Champ de vision horizontal de l'appareil.
   double hFov = 0;
 
@@ -18,10 +16,4 @@ class ArStatus {
   double pitch = 0;
 
   Position? userLocation;
-
-  factory ArStatus() {
-    return _instance;
-  }
-
-  ArStatus._internal();
 }

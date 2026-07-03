@@ -1,12 +1,19 @@
-import 'dart:math';
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:native_device_orientation/native_device_orientation.dart';
 
 import 'ar_location_view.dart';
 
-/// Signature for a function that creates a widget for a given annotation,
+/// Signature for a function that creates a widget for a given annotation.
+///
+/// [ArView] re-sorts and re-filters annotations on every sensor update, so
+/// their position in the rendered list is not stable across frames. To keep
+/// Flutter's element reconciliation correct despite that reordering, [ArView]
+/// already wraps the returned widget in a [Positioned] keyed with
+/// `ValueKey(annotation.uid)` — you do not need to (but may) key the widget
+/// you return here yourself.
 typedef AnnotationViewBuilder = Widget Function(
     BuildContext context, ArAnnotation annotation);
 
@@ -32,6 +39,7 @@ class ArView extends StatefulWidget {
     this.radarPosition,
     this.showRadar = true,
     this.radarWidth,
+    this.sensorSource,
   });
 
   final List<ArAnnotation> annotations;
@@ -71,92 +79,125 @@ class ArView extends StatefulWidget {
   ///Radar width
   final double? radarWidth;
 
+  ///Source of fused sensor/location samples. Defaults to a device-backed
+  ///[ArSensorManager] instantiated per [ArView]. Provide your own
+  ///implementation (e.g. a fake source) to test without real hardware or
+  ///to share a single sensor pipeline across multiple views.
+  final ArSensorSource? sensorSource;
+
   @override
   State<ArView> createState() => _ArViewState();
 }
 
 class _ArViewState extends State<ArView> {
-  ArStatus arStatus = ArStatus();
+  late final ArSensorSource _sensorSource =
+      widget.sensorSource ?? ArSensorManager();
+
+  final AnnotationLayoutEngine _layoutEngine = const AnnotationLayoutEngine();
+
+  StreamSubscription<ArSensor>? _sensorSubscription;
+
+  /// Latest sensor sample received. Updated only from [_onArSensor], never
+  /// from [build], so effects (updating [position], notifying
+  /// [ArView.onLocationChange]) never run as a side effect of building.
+  ArSensor? _latestSensor;
 
   Position? position;
 
   @override
   void initState() {
-    ArSensorManager.instance.init();
     super.initState();
+    _sensorSource.init();
+    _sensorSubscription = _sensorSource.arSensor.listen(_onArSensor);
   }
 
   @override
   void dispose() {
-    ArSensorManager.instance.dispose();
+    _sensorSubscription?.cancel();
+    _sensorSource.dispose();
     super.dispose();
+  }
+
+  void _onArSensor(ArSensor arSensor) {
+    if (arSensor.location != null) {
+      _updatePosition(arSensor.location!);
+    }
+    if (!mounted) return;
+    setState(() {
+      _latestSensor = arSensor;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
-    return StreamBuilder(
-      stream: ArSensorManager.instance.arSensor,
-      builder: (context, data) {
-        if (data.hasData) {
-          if (data.data != null) {
-            final arSensor = data.data!;
-            if (arSensor.location == null) {
-              return loading();
-            }
-            _calculateFOV(arSensor.orientation, width, height);
-            _updatePosition(arSensor.location!);
-            final deviceLocation = arSensor.location!;
-            final annotations = _filterAndSortArAnnotation(
-                widget.annotations, arSensor, deviceLocation);
-            _transformAnnotation(annotations);
-            return Stack(
-              children: [
-                if (kDebugMode && widget.showDebugInfoSensor)
-                  Positioned(
-                    bottom: 0,
-                    child: _debugInfo(context, arSensor),
-                  ),
-                Stack(
-                  children: annotations.map(
-                    (e) {
-                      return Positioned(
-                        left: e.arPosition.dx,
-                        top: e.arPosition.dy + height * 0.5,
-                        child: Transform.translate(
-                          offset: Offset(0, e.arPositionOffset.dy),
-                          child: Transform.scale(
-                            scale: widget.scaleWithDistance
-                                ? 1 -
-                                    (e.distanceFromUser /
-                                        (widget.maxVisibleDistance + 280))
-                                : 1,
-                            child: SizedBox(
-                              width: widget.annotationWidth,
-                              height: widget.annotationHeight,
-                              child: widget.annotationViewBuilder(context, e),
-                            ),
-                          ),
+
+    final arSensor = _latestSensor;
+    if (arSensor == null || arSensor.location == null) {
+      return loading();
+    }
+
+    final deviceLocation = arSensor.location!;
+    final layout = _layoutEngine.layout(
+      annotations: widget.annotations,
+      arSensor: arSensor,
+      deviceLocation: deviceLocation,
+      width: width,
+      height: height,
+      config: AnnotationLayoutConfig(
+        annotationWidth: widget.annotationWidth,
+        annotationHeight: widget.annotationHeight,
+        maxVisibleDistance: widget.maxVisibleDistance,
+        paddingOverlap: widget.paddingOverlap,
+        yOffsetOverlap: widget.yOffsetOverlap,
+      ),
+    );
+    final annotations = layout.annotations;
+    return Stack(
+      children: [
+        if (kDebugMode && widget.showDebugInfoSensor)
+          Positioned(
+            bottom: 0,
+            child: _debugInfo(context, arSensor),
+          ),
+        Stack(
+          children: annotations
+              .map(
+                (e) {
+                  return Positioned(
+                    key: ValueKey(e.uid),
+                    left: e.arPosition.dx,
+                    top: e.arPosition.dy + height * 0.5,
+                    child: Transform.translate(
+                      offset: Offset(0, e.arPositionOffset.dy),
+                      child: Transform.scale(
+                        scale: widget.scaleWithDistance
+                            ? 1 -
+                                (e.distanceFromUser /
+                                    (widget.maxVisibleDistance + 280))
+                            : 1,
+                        child: SizedBox(
+                          width: widget.annotationWidth,
+                          height: widget.annotationHeight,
+                          child: widget.annotationViewBuilder(context, e),
                         ),
-                      );
-                    },
-                  ).toList().reversed.toList(),
-                ),
-                if (widget.showRadar)
-                  _radarPosition(
-                      context,
-                      widget.radarPosition ?? RadarPosition.topLeft,
-                      arSensor.heading,
-                      widget.radarWidth != null
-                          ? (widget.radarWidth! * 2)
-                          : width)
-              ],
-            );
-          }
-        }
-        return loading();
-      },
+                      ),
+                    ),
+                  );
+                },
+              )
+              .toList()
+              .reversed
+              .toList(),
+        ),
+        if (widget.showRadar)
+          _radarPosition(
+              context,
+              widget.radarPosition ?? RadarPosition.topLeft,
+              arSensor.heading,
+              widget.radarWidth != null ? (widget.radarWidth! * 2) : width)
+      ],
     );
   }
 
@@ -238,108 +279,6 @@ class _ArViewState extends State<ArView> {
     );
   }
 
-  void _calculateFOV(
-      NativeDeviceOrientation orientation, double width, double height) {
-    double hFov = 0;
-    double vFov = 0;
-    const tempFOv = 58.0;
-
-    if (orientation == NativeDeviceOrientation.landscapeLeft ||
-        orientation == NativeDeviceOrientation.landscapeRight) {
-      hFov = tempFOv;
-      vFov = (2 * atan(tan((hFov / 2).toRadians) * (height / width))).toDegrees;
-    } else {
-      vFov = tempFOv;
-      hFov = (2 * atan(tan((vFov / 2).toRadians) * (width / height))).toDegrees;
-    }
-    arStatus.hFov = hFov;
-    arStatus.vFov = vFov;
-    arStatus.hPixelPerDegree = hFov > 0 ? (width / hFov) : 0;
-    arStatus.vPixelPerDegree = vFov > 0 ? (height / vFov) : 0;
-  }
-
-  List<ArAnnotation> _visibleAnnotations(
-      List<ArAnnotation> annotations, double heading) {
-    final degreesDeltaH = arStatus.hFov;
-    return annotations.where((ArAnnotation annotation) {
-      final delta = ArMath.deltaAngle(heading, annotation.azimuth);
-      final isVisible = delta.abs() < degreesDeltaH;
-      annotation.isVisible = isVisible;
-      return annotation.isVisible;
-    }).toList();
-  }
-
-  List<ArAnnotation> _calculateDistanceAndBearingFromUser(
-      List<ArAnnotation> annotations,
-      Position deviceLocation,
-      ArSensor arSensor) {
-    return annotations.map((e) {
-      final annotationLocation = e.position;
-      e.azimuth = Geolocator.bearingBetween(
-        deviceLocation.latitude,
-        deviceLocation.longitude,
-        annotationLocation.latitude,
-        annotationLocation.longitude,
-      );
-      e.distanceFromUser = Geolocator.distanceBetween(
-          deviceLocation.latitude,
-          deviceLocation.longitude,
-          annotationLocation.latitude,
-          annotationLocation.longitude);
-      final dy = arSensor.pitch * arStatus.vPixelPerDegree;
-      final dx = ArMath.deltaAngle(e.azimuth, arSensor.heading) *
-          arStatus.hPixelPerDegree;
-      e.arPosition = Offset(dx, dy);
-      return e;
-    }).toList();
-  }
-
-  List<ArAnnotation> _filterAndSortArAnnotation(List<ArAnnotation> annotations,
-      ArSensor arSensor, Position deviceLocation) {
-    List<ArAnnotation> temps = _calculateDistanceAndBearingFromUser(
-        annotations, deviceLocation, arSensor);
-    temps = annotations
-        .where(
-            (element) => element.distanceFromUser < widget.maxVisibleDistance)
-        .toList();
-    temps = _visibleAnnotations(temps, arSensor.heading);
-    return temps;
-  }
-
-  void _transformAnnotation(List<ArAnnotation> annotations) {
-    annotations.sort((a, b) => (a.distanceFromUser < b.distanceFromUser)
-        ? -1
-        : ((a.distanceFromUser > b.distanceFromUser) ? 1 : 0));
-
-    for (final ArAnnotation annotation in annotations) {
-      var i = 0;
-      while (i < annotations.length) {
-        final annotation2 = annotations[i];
-        if (annotation.uid == annotation2.uid) {
-          break;
-        }
-        final collision =
-            intersects(annotation, annotation2, widget.annotationWidth);
-        if (collision) {
-          annotation.arPositionOffset = Offset(
-              0,
-              annotation2.arPositionOffset.dy -
-                  ((widget.yOffsetOverlap ?? widget.annotationHeight) +
-                      widget.paddingOverlap));
-        }
-        i++;
-      }
-    }
-  }
-
-  bool intersects(
-      ArAnnotation annotation1, ArAnnotation annotation2, double width) {
-    return (annotation2.arPosition.dx >= annotation1.arPosition.dx &&
-            annotation2.arPosition.dx <= (annotation1.arPosition.dx + width)) ||
-        (annotation1.arPosition.dx >= annotation2.arPosition.dx &&
-            annotation1.arPosition.dx <= (annotation2.arPosition.dx + width));
-  }
-
   void _updatePosition(Position newPosition) {
     if (position == null) {
       widget.onLocationChange(newPosition);
@@ -352,7 +291,6 @@ class _ArViewState extends State<ArView> {
         newPosition.longitude,
       );
       if (distance > widget.minDistanceReload) {
-        widget.onLocationChange(newPosition);
         widget.onLocationChange(newPosition);
         position = newPosition;
       }

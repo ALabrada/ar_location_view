@@ -23,8 +23,9 @@ class ArLocationWidget extends StatefulWidget {
     this.radarPosition,
     this.showRadar = true,
     this.radarWidth,
-    this.isLoading =  false,
+    this.isLoading = false,
     this.loadingWidget,
+    this.sensorSource,
   });
 
   ///List of POIs
@@ -85,6 +86,10 @@ class ArLocationWidget extends StatefulWidget {
 
   final Widget? loadingWidget;
 
+  ///Source of fused sensor/location samples, forwarded to [ArView].
+  ///Defaults to a device-backed [ArSensorManager] instantiated per view.
+  final ArSensorSource? sensorSource;
+
   @override
   State<ArLocationWidget> createState() => _ArLocationWidgetState();
 }
@@ -125,11 +130,16 @@ class _ArLocationWidgetState extends State<ArLocationWidget> {
             radarPosition: widget.radarPosition,
             showRadar: widget.showRadar,
             radarWidth: widget.radarWidth,
+            sensorSource: widget.sensorSource,
           ),
         if (initCam && widget.accessory != null) widget.accessory!,
         if (widget.isLoading)
-          if (widget.loadingWidget ==  null)  const Center(child: CircularProgressIndicator(),)
-          else widget.loadingWidget!
+          if (widget.loadingWidget == null)
+            const Center(
+              child: CircularProgressIndicator(),
+            )
+          else
+            widget.loadingWidget!
       ],
     );
   }
