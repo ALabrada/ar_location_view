@@ -255,7 +255,6 @@ class _ArViewState extends State<ArView> {
           position!.longitude, newPosition.latitude, newPosition.longitude);
       if (distance > widget.minDistanceReload) {
         widget.onLocationChange(newPosition);
-        widget.onLocationChange(newPosition);
         position = newPosition;
       }
     }

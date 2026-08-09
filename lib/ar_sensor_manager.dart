@@ -32,15 +32,25 @@ class ArSensorManager {
   double _heading = 0.0;
   double _compassAccuracy = 0.0;
 
-  final StreamController<ArSensor> _arSensor = StreamController();
+  final StreamController<ArSensor> _arSensor = StreamController.broadcast();
 
   List<double> pitchHistory = [];
 
+  int _initCount = 0;
+  bool _started = false;
+
   void init() {
-    _checkLocationPermission();
+    _initCount++;
+    if (_initCount == 1) {
+      _checkLocationPermission();
+    }
   }
 
   void _initialisation() {
+    if (_started) {
+      return;
+    }
+    _started = true;
     _accelerationStream =
         accelerometerEventStream().listen((AccelerometerEvent event) {
       _accelerometer = Vector3(event.x, event.y, event.z);
@@ -117,11 +127,24 @@ class ArSensorManager {
   }
 
   void dispose() {
+    if (_initCount <= 0) {
+      return;
+    }
+    _initCount--;
+    if (_initCount > 0) {
+      return;
+    }
     _accelerationStream?.cancel();
+    _accelerationStream = null;
     _userAccelerationStream?.cancel();
+    _userAccelerationStream = null;
     _positionSubscription?.cancel();
+    _positionSubscription = null;
     _orientationStreamSubscription?.cancel();
+    _orientationStreamSubscription = null;
     _headingStream?.cancel();
+    _headingStream = null;
+    _started = false;
   }
 
   double _filterExponantial(List<double> numbers, double alpha) {

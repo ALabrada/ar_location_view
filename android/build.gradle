@@ -22,6 +22,8 @@ rootProject.allprojects {
 apply plugin: 'com.android.library'
 
 android {
+    namespace 'com.pie.technology.ar.location.view.ar_location_view'
+
     compileSdkVersion 34
 
     compileOptions {
