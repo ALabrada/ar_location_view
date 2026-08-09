@@ -16,6 +16,7 @@ class ArLocationWidget extends StatefulWidget {
     this.paddingOverlap = 5,
     this.yOffsetOverlap,
     this.accessory,
+    this.errorBuilder,
     this.minDistanceReload = 50,
     this.scaleWithDistance = true,
     this.markerColor,
@@ -61,6 +62,9 @@ class ArLocationWidget extends StatefulWidget {
   ///accessory
   final Widget? accessory;
 
+  ///Renders localized messages for camera errors.
+  final ArCameraErrorBuilder? errorBuilder;
+
   ///Min distance reload
   final double minDistanceReload;
 
@@ -102,6 +106,7 @@ class _ArLocationWidgetState extends State<ArLocationWidget> {
     return Stack(
       children: [
         ArCamera(
+          errorBuilder: widget.errorBuilder,
           onCameraError: (String error) {
             initCam = false;
             setState(() {});
