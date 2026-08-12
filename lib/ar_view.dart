@@ -196,17 +196,24 @@ class _ArViewState extends State<ArView> {
               context,
               widget.radarPosition ?? RadarPosition.topLeft,
               arSensor.heading,
-              widget.radarWidth != null ? (widget.radarWidth! * 2) : width)
+              widget.radarWidth ?? _defaultRadarSize(context))
       ],
     );
   }
 
+  /// Radar edge size when [ArView.radarWidth] is not provided, bounded so it
+  /// stays proportional to the view in any orientation.
+  double _defaultRadarSize(BuildContext context) {
+    final shortestSide = MediaQuery.of(context).size.shortestSide;
+    return (shortestSide * 0.2).clamp(60.0, 160.0);
+  }
+
   Widget _radarPosition(BuildContext context, RadarPosition position,
-      double heading, double width) {
+      double heading, double size) {
     final radar = Padding(
       padding: const EdgeInsets.all(8.0),
       child: CustomPaint(
-        size: Size(width / 2, width / 2),
+        size: Size(size, size),
         painter: RadarPainter(
           maxDistance: widget.maxVisibleDistance,
           arAnnotations: widget.annotations,
@@ -221,7 +228,7 @@ class _ArViewState extends State<ArView> {
       case RadarPosition.topCenter:
         return Positioned(
           top: 0,
-          left: screenWidth / 2 - width / 4,
+          left: screenWidth / 2 - size / 2,
           child: radar,
         );
       case RadarPosition.topRight:
@@ -239,7 +246,7 @@ class _ArViewState extends State<ArView> {
       case RadarPosition.bottomCenter:
         return Positioned(
           bottom: 0,
-          left: screenWidth / 2 - width / 4,
+          left: screenWidth / 2 - size / 2,
           child: radar,
         );
       case RadarPosition.bottomRight:
