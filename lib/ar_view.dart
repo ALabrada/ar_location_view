@@ -19,6 +19,11 @@ typedef AnnotationViewBuilder = Widget Function(
 
 typedef ChangeLocationCallback = void Function(Position position);
 
+/// Builds a widget that renders a location error message. If not provided,
+/// [ArView] falls back to a default English [Text].
+typedef ArLocationErrorBuilder =
+    Widget Function(BuildContext context, ArLocationError error);
+
 class ArView extends StatefulWidget {
   const ArView({
     super.key,
@@ -40,6 +45,7 @@ class ArView extends StatefulWidget {
     this.showRadar = true,
     this.radarWidth,
     this.sensorSource,
+    this.locationErrorBuilder,
   });
 
   final List<ArAnnotation> annotations;
@@ -84,6 +90,10 @@ class ArView extends StatefulWidget {
   ///implementation (e.g. a fake source) to test without real hardware or
   ///to share a single sensor pipeline across multiple views.
   final ArSensorSource? sensorSource;
+
+  /// Renders a localized message for [ArLocationError]. If not provided, a
+  /// default English message is used.
+  final ArLocationErrorBuilder? locationErrorBuilder;
 
   @override
   State<ArView> createState() => _ArViewState();
@@ -134,7 +144,14 @@ class _ArViewState extends State<ArView> {
     final height = MediaQuery.of(context).size.height;
 
     final arSensor = _latestSensor;
-    if (arSensor == null || arSensor.location == null) {
+    if (arSensor == null) {
+      return loading();
+    }
+    final locationError = arSensor.locationError;
+    if (locationError != null) {
+      return _buildLocationError(context, locationError);
+    }
+    if (arSensor.location == null) {
       return loading();
     }
 
@@ -284,6 +301,23 @@ class _ArViewState extends State<ArView> {
     return const Center(
       child: CircularProgressIndicator(),
     );
+  }
+
+  Widget _buildLocationError(BuildContext context, ArLocationError error) {
+    final builder = widget.locationErrorBuilder;
+    if (builder != null) {
+      return builder(context, error);
+    }
+    return Center(child: Text(_defaultLocationErrorMessage(error)));
+  }
+
+  String _defaultLocationErrorMessage(ArLocationError error) {
+    switch (error) {
+      case ArLocationError.permissionDisallowed:
+        return 'Location permission is disallowed';
+      case ArLocationError.serviceDisabled:
+        return 'Location services are disabled';
+    }
   }
 
   void _updatePosition(Position newPosition) {

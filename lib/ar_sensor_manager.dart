@@ -28,6 +28,8 @@ class ArSensorManager implements ArSensorSource {
   double _heading = 0.0;
   double _compassAccuracy = 0.0;
 
+  ArLocationError? _locationError;
+
   late StreamController<ArSensor> _arSensorController;
 
   List<double> pitchHistory = [];
@@ -58,10 +60,20 @@ class ArSensorManager implements ArSensorSource {
     });
 
     _positionSubscription =
-        Geolocator.getPositionStream().listen((Position position) {
-      _position = position;
-      _calculateSensor();
-    });
+        Geolocator.getPositionStream().listen(
+      (Position position) {
+        _position = position;
+        _locationError = null;
+        _calculateSensor();
+      },
+      onError: (Object error) async {
+        if (!await Permission.location.isGranted) {
+          _setLocationError(ArLocationError.permissionDisallowed);
+        } else {
+          _setLocationError(ArLocationError.serviceDisabled);
+        }
+      },
+    );
 
     _orientationStream =
         _deviceOrientationCommunicator.onOrientationChanged(useSensor: true);
@@ -84,19 +96,11 @@ class ArSensorManager implements ArSensorSource {
     pitchHistory.add(pitch);
 
     const serieLength = 100;
-    const alpha = 0.009;
     if (pitchHistory.length > serieLength) {
       pitchHistory = pitchHistory.sublist(pitchHistory.length - serieLength);
     }
 
-    final arSensor = ArSensor(
-      heading: _heading,
-      pitch: _filterExponential(pitchHistory, alpha),
-      location: _position,
-      orientation: _orientation,
-      compassAccuracy: _compassAccuracy,
-    );
-    _arSensorController.add(arSensor);
+    _publish();
   }
 
   @override
@@ -105,14 +109,34 @@ class ArSensorManager implements ArSensorSource {
   Future<void> _checkLocationPermission() async {
     bool isLocationGranted = await Permission.location.isGranted;
     if (!isLocationGranted) {
-      await Permission.location.request();
-      isLocationGranted = await Permission.location.isGranted;
-      if (isLocationGranted) {
-        _initialisation();
-      }
-    } else {
-      _initialisation();
+      final status = await Permission.location.request();
+      isLocationGranted = status.isGranted;
     }
+    if (!isLocationGranted) {
+      _setLocationError(ArLocationError.permissionDisallowed);
+      return;
+    }
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      _setLocationError(ArLocationError.serviceDisabled);
+    }
+    _initialisation();
+  }
+
+  void _setLocationError(ArLocationError error) {
+    _locationError = error;
+    _publish();
+  }
+
+  void _publish() {
+    final arSensor = ArSensor(
+      heading: _heading,
+      pitch: _filterExponential(pitchHistory, 0.009),
+      location: _position,
+      orientation: _orientation,
+      compassAccuracy: _compassAccuracy,
+      locationError: _locationError,
+    );
+    _arSensorController.add(arSensor);
   }
 
   @override
